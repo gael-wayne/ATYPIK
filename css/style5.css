@@ -11060,3 +11060,6 @@ p {
     background-color: #eee; /* Add a hover effect to all links, except for headers */
     color: black;
   }
+
+h1
+  color: white;
