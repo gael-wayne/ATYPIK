@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendrier Partagé en Ligne</title>
+    <!-- Chargement de la bibliothèque Firebase -->
+    <script src="https://gstatic.com"></script>
+    <script src="https://gstatic.com"></script>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --danger: #ef4444;
+            --bg: #f8fafc;
+            --surface: #ffffff;
+            --text: #1e293b;
+            --border: #e2e8f0;
+        }
+        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 20px; margin: 0; }
+        .container { max-width: 1000px; margin: 0 auto; background: var(--surface); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .controls { display: flex; gap: 10px; align-items: center; }
+        button { background: var(--primary); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        button.danger { background: var(--danger); }
+        button:hover { opacity: 0.9; }
+        .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+        .day-name { text-align: center; font-weight: bold; padding: 8px; background: #e2e8f0; border-radius: 4px; }
+        .day { min-height: 120px; border: 1px solid var(--border); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; background: var(--surface); }
+        .day-number { font-weight: bold; margin-bottom: 4px; }
+        .event-list { flex-grow: 1; overflow-y: auto; }
+        .event { background: #dbeafe; color: #1e40af; font-size: 11px; padding: 4px; margin-bottom: 4px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+        .delete-btn { background: none; color: var(--danger); border: none; padding: 0 4px; cursor: pointer; font-size: 12px; display: none; }
+        .admin-mode .delete-btn { display: inline-block; }
+        .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--surface); padding: 20px; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); z-index: 10; width: 300px; }
+        .overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); z-index: 5; }
+        input { width: 100%; padding: 8px; margin: 8px 0 16px 0; border: 1px solid var(--border); border-radius: 4px; box-sizing: border-box; }
+        .badge { background: #e2e8f0; padding: 6px 12px; border-radius: 20px; font-size: 13px; font-weight: bold; }
+        .badge.active { background: #bbf7d0; color: #166534; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <div class="controls">
+            <button onclick="changeMonth(-1)">◀</button>
+            <h2 id="monthTitle" style="margin:0; min-width:180px; text-align:center;"></h2>
+            <button onclick="changeMonth(1)">▶</button>
+        </div>
+        <div class="controls">
+            <span id="authStatus" class="badge">Mode Lecture Seule</span>
+            <button id="loginBtn" onclick="toggleAuth()" style="background:#475569;">S'authentifier</button>
+        </div>
+    </div>
+    
+    <div class="grid" id="calendarGrid"></div>
+</div>
+
+<!-- Modal Événement -->
+<div class="overlay" id="overlay" onclick="closeModal()"></div>
+<div class="modal" id="modal">
+    <h3 style="margin-top:0;">Programmer une réunion</h3>
+    <label>Titre de la réunion :</label>
+    <input type="text" id="eventTitle" placeholder="Ex: Point équipe">
+    <button onclick="saveEvent()">Enregistrer</button>
+    <button onclick="closeModal()" style="background:#64748b;">Annuler</button>
+</div>
+
+<script>
+    // ⚠️ REMPLACEZ CES CONFIGURATIONS PAR LES VÔTRES (Étape 2)
+    const firebaseConfig = {
+        apiKey: "AIzaSyA5eEnk4l_PHbBynSXfIFUBW-6wKG4ePY4",
+
+    authDomain: "calendrier-dc322.firebaseapp.com",
+
+    databaseURL: "https://calendrier-dc322-default-rtdb.europe-west1.firebasedatabase.app",
+
+    projectId: "calendrier-dc322",
+
+    storageBucket: "calendrier-dc322.firebasestorage.app",
+
+    messagingSenderId: "899438348988",
+
+    appId: "1:899438348988:web:567105ee3782f14fb11eb9",
+
+    measurementId: "G-YM3R7C5FE8"
+
+  };
+
+    
+    // Le mot de passe secret que vous donnerez aux utilisateurs autorisés
+    const CONFIG_PASSWORD = "@@Justback1"; 
+
+    // Initialisation Firebase
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+
+    let currentDate = new Date();
+    let events = {};
+    let isAdmin = false;
+    let selectedDateStr = "";
+
+    const months = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+
+    // Écoute en temps réel des modifications sur le serveur
+    database.ref('meetings').on('value', (snapshot) => {
+        events = snapshot.val() || {};
+        initCalendar();
+    });
+
+    function initCalendar() {
+        const grid = document.getElementById('calendarGrid');
+        grid.innerHTML = "";
+        const year = currentDate.getFullYear();
+        const month = currentDate.getMonth();
+
+        document.getElementById('monthTitle').innerText = `${months[month]} ${year}`;
+        document.body.className = isAdmin ? "admin-mode" : "";
+
+        // Jours de la semaine
+        ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"].forEach(d => {
+            grid.innerHTML += `<div class="day-name">${d}</div>`;
+        });
+
+        let firstDay = new Date(year, month, 1).getDay();
+        let startingSpaces = firstDay === 0 ? 6 : firstDay - 1;
+
+        for (let i = 0; i < startingSpaces; i++) {
+            grid.innerHTML += `<div class="day" style="background:#f1f5f9;"></div>`;
+        }
+
+        const totalDays = new Date(year, month + 1, 0).getDate();
+
+        for (let day = 1; day <= totalDays; day++) {
+            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            let eventsHtml = "";
+
+            if (events[dateStr]) {
+                Object.keys(events[dateStr]).forEach(eventId => {
+                    const ev = events[dateStr][eventId];
+                    eventsHtml += `
+                        <div class="event">
+                            <span>${ev.title}</span>
+                            <button class="delete-btn" onclick="deleteEvent(event, '${dateStr}', '${eventId}')">✕</button>
+                        </div>`;
+                });
+            }
+
+            grid.innerHTML += `
+                <div class="day" onclick="openModal('${dateStr}')" style="cursor: ${isAdmin ? 'pointer' : 'default'}">
+                    <div class="day-number">${day}</div>
+                    <div class="event-list">${eventsHtml}</div>
+                </div>`;
+        }
+    }
+
+    function toggleAuth() {
+        if (isAdmin) {
+            isAdmin = false;
+            document.getElementById('authStatus').innerText = "Mode Lecture Seule";
+            document.getElementById('authStatus').classList.remove('active');
+            document.getElementById('loginBtn').innerText = "S'authentifier";
+            initCalendar();
+        } else {
+            const pass = prompt("Entrez le mot de passe d'autorisation pour modifier le calendrier :");
+            if (pass === CONFIG_PASSWORD) {
+                isAdmin = true;
+                document.getElementById('authStatus').innerText = "Mode Éditeur Actif";
+                document.getElementById('authStatus').classList.add('active');
+                document.getElementById('loginBtn').innerText = "Se déconnecter";
+                initCalendar();
+            } else if (pass !== null) {
+                alert("Mot de passe incorrect.");
+            }
+        }
+    }
+
+    function openModal(dateStr) {
+        if (!isAdmin) return; // Bloque si pas autorisé
+        selectedDateStr = dateStr;
+        document.getElementById('eventTitle').value = "";
+        document.getElementById('modal').style.display = 'block';
+        document.getElementById('overlay').style.display = 'block';
+    }
+
+    function closeModal() {
+        document.getElementById('modal').style.display = 'none';
+        document.getElementById('overlay').style.display = 'none';
+    }
+
+    function saveEvent() {
+        const title = document.getElementById('eventTitle').value.trim();
+        if (!title || !selectedDateStr) return;
+
+        // Envoi en temps réel au serveur Firebase
+        database.ref(`meetings/${selectedDateStr}`).push({ title: title });
+        closeModal();
+    }
+
+    function deleteEvent(event, dateStr, eventId) {
+        event.stopPropagation(); // Empêche d'ouvrir la modal en cliquant sur le bouton supprimer
+        if (!isAdmin) return;
+        if (confirm("Supprimer cette réunion ?")) {
+            // Suppression en temps réel sur le serveur Firebase
+            database.ref(`meetings/${dateStr}/${eventId}`).remove();
+        }
+    }
+
+    function changeMonth(dir) { currentDate.setMonth(currentDate.getMonth() + dir); initCalendar(); }
+</script>
+</body>
+</html>
